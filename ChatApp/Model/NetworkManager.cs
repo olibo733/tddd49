@@ -14,15 +14,20 @@ namespace ChatApp.Model
 {
     public class NetworkManager : INotifyPropertyChanged
     {
+
+        public string UserName { get; set; }
         private NetworkStream stream;
         private TcpClient pendingClient; // Holds the reference to the pending connection
-        private TcpClient client;
+        private TcpClient serverClient;
+        private TcpClient client; // Client instance
         private NetworkStream clientStream;
+        private TcpListener server;
 
         public event PropertyChangedEventHandler PropertyChanged;
         public event Action<bool> ConnectionRequest;
         public event Action<bool> ConnectionChanged;
         public event Action Disconnected;
+        public event Action<ChatMessage> MessageReceived;
 
         public delegate void ConnectionRequestReceivedHandler(TcpClient client);
         public event ConnectionRequestReceivedHandler ConnectionRequestReceived;
@@ -57,8 +62,15 @@ namespace ChatApp.Model
                     return;
                 }
 
+                if (server != null && server.Server.IsBound)
+                {
+                    System.Diagnostics.Debug.WriteLine("Server is already running.");
+                    return; // Server is already started
+                }
+
                 var ipEndPoint = new IPEndPoint(ipAddress, port);
-                TcpListener server = new TcpListener(ipEndPoint);
+                server = new TcpListener(ipEndPoint);
+                
 
                 try
                 {
@@ -68,12 +80,14 @@ namespace ChatApp.Model
                     while (true) // Keep listening for new connections
                     {
                         TcpClient client = server.AcceptTcpClient();
-                        this.ServerClient = client;
+                        this.serverClient = client;
                         System.Diagnostics.Debug.WriteLine("Connection request received!");
 
                         // Store the pending client and notify the ViewModel
                         pendingClient = client;
-                        ConnectionRequest?.Invoke(true); // Notify ViewModel that a request is pending                    
+                        ConnectionRequest?.Invoke(true); // Notify ViewModel that a request is pending
+                        Task.Factory.StartNew(() => ListenForClientResponse(client));
+
                     }
                 }
                 catch (Exception ex)
@@ -87,67 +101,114 @@ namespace ChatApp.Model
 
         public void Disconnect()
         {
-            if (pendingClient != null && pendingClient.Connected)
+            try
             {
-                // Close the client and stream
-                try
+                System.Diagnostics.Debug.WriteLine("Disconnect request received!");
+
+                var disconnectMessage = new ChatMessage
                 {
-                    System.Diagnostics.Debug.WriteLine("Disconnect request rceived!");
+                    Header = "Disconnect",
+                    Name = this.UserName,
+                    Message = "User has disconnected",
+                    Date = DateTime.Now
+                };
 
-                    if (stream != null)
-                    {
-                        stream?.Close();
-                        stream = null;
+                string serializedMessage = SerializeChatMessage(disconnectMessage);
+                byte[] messageBytes = Encoding.UTF8.GetBytes(serializedMessage);
 
-                        pendingClient.Close();
-                        pendingClient = null;
-
-                        Disconnected?.Invoke();
-                    }
-                    
-                    System.Diagnostics.Debug.WriteLine($"Disconnect request rceived!{pendingClient}");
-                    
-
-                    // Notify about the disconnection
-                    
-                } catch (Exception ex)
+                // Server Side Disconnect
+                if (pendingClient != null)
                 {
-                    System.Diagnostics.Debug.WriteLine($"Error is: {ex.Message}");
+                    SendMessageFromServer(serializedMessage);
+                    StopServer();
+                }
+                
+
+                // Client Side Disconnect
+                if (client != null && client.Connected)
+                {
+                    SendMessageToServer(serializedMessage);
+                    NetworkStream clientStreams = client.GetStream();
+                    clientStreams.Write(messageBytes, 0, messageBytes.Length);
+                    clientStreams.Flush();
+                    clientStreams?.Close();
+                    client.Close();
+                    client = null;
+                    clientStream = null;
                 }
 
+                // Invoke the Disconnected event to notify the UI or other components
+                Disconnected?.Invoke();
             }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error in Disconnect: {ex.Message}");
+            }
+
+            System.Diagnostics.Debug.WriteLine("Disconnect process completed.");
         }
 
-        private void HandleConnection(TcpClient client)
+        public void StopServer()
         {
             try
             {
-                NetworkStream stream = client.GetStream();
-
-                while (true) // Keep handling the communication
+                if (server != null)
                 {
-                    byte[] buffer = new byte[1024];
-                    int bytesRead = stream.Read(buffer, 0, buffer.Length);
-                    if (bytesRead == 0)
-                        break; // The client has disconnected
+                    server.Stop();
+                    server = null;
+                }
 
-                    string message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                    ChatMessage chatMessage = DeserializeChatMessage(message);
-
-                    // Process the received chat message
-                    ProcessReceivedChatMessage(chatMessage);
-
+                if (pendingClient != null)
+                {
+                    stream?.Close();
+                    pendingClient.Close();
+                    pendingClient = null;
+                    stream = null;
                 }
             }
             catch (Exception ex)
             {
-                // Handle any exceptions
-            }
-            finally
-            {
-                client.Close();
+                System.Diagnostics.Debug.WriteLine($"Error stopping server: {ex.Message}");
             }
         }
+
+
+        private void ListenForClientResponse(TcpClient client)
+        {
+            Task.Run(() =>
+            {
+                try
+                {
+                    NetworkStream stream = client.GetStream();
+                    byte[] buffer = new byte[1024];
+
+                    while (true)
+                    {
+                        int bytesRead = stream.Read(buffer, 0, buffer.Length);
+                        if (bytesRead == 0)
+                            break; // Client has disconnected
+
+                        string message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                        ChatMessage serverResponse = DeserializeChatMessage(message);
+                        System.Diagnostics.Debug.WriteLine($"Message on server side is: {message}");
+                        Application.Current.Dispatcher.Invoke(() =>
+                        {
+                            ProcessReceivedChatMessage(serverResponse);
+                        });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine("ListenForClientResponse Error: " + ex.Message);
+                }
+                finally
+                {
+                    client.Close();
+                }
+            });
+        }
+
+        
 
         private void ProcessReceivedChatMessage(ChatMessage chatMessage)
         {
@@ -155,7 +216,11 @@ namespace ChatApp.Model
             // For example, broadcasting the message to other clients or just logging it
             if(chatMessage.Header == "ChatMessage")
             {
-                System.Diagnostics.Debug.WriteLine($"Message recieved on serverside is {chatMessage.Message}");
+                MessageReceived?.Invoke(chatMessage);
+            }
+            else if (chatMessage.Header == "Disconnect")
+            {
+                System.Diagnostics.Debug.WriteLine($"Message recieved on client side is: {chatMessage.Message}");
             }
         }
 
@@ -168,7 +233,6 @@ namespace ChatApp.Model
                 SendConnectionResponse("Accept");
                 this.ConnectedClient = pendingClient;
                 // Move the connection handling logic here
-                Task.Factory.StartNew(() => HandleConnection(pendingClient));
                 ConnectionRequest?.Invoke(false); // Notify ViewModel that the request has been processed
                 OnConnectionChanged(true);
             }
@@ -197,6 +261,7 @@ namespace ChatApp.Model
                     ChatMessage ServerConnectionResponse = new ChatMessage
                     {
                         Header = "ConnectionRequestResponse",
+                        Name = this.UserName,
                         Message = "Accept",
                         Date = DateTime.Now
                     };
@@ -207,6 +272,7 @@ namespace ChatApp.Model
                     ChatMessage ServerConnectionResponse = new ChatMessage
                     {
                         Header = "ConnectionRequestResponse",
+                        Name = this.UserName,
                         Message = "Deny",
                         Date = DateTime.Now
                     };
@@ -228,7 +294,7 @@ namespace ChatApp.Model
                 NetworkStream stream = pendingClient.GetStream();
                 byte[] messageBytes = Encoding.UTF8.GetBytes(message);
                 stream.Write(messageBytes, 0, messageBytes.Length);
-                System.Diagnostics.Debug.WriteLine($"Sending message {message}");
+                System.Diagnostics.Debug.WriteLine($"Sending message {message} to {pendingClient.ToString}");
             }
         }
 
@@ -247,7 +313,7 @@ namespace ChatApp.Model
                 }
 
                 var serverEndpoint = new IPEndPoint(ipAddress, port);
-                TcpClient client = new TcpClient();
+                client = new TcpClient();
 
                 try
                 {
@@ -280,11 +346,13 @@ namespace ChatApp.Model
 
         public void SendMessageToServer(string message)
         {
-            if (client != null && client.Connected)
+            if (client != null && client.Connected) // Use client instance
             {
+                NetworkStream stream = client.GetStream(); // Get client's own stream
+                
                 byte[] messageBytes = Encoding.UTF8.GetBytes(message);
-
-                clientStream.Write(messageBytes, 0, messageBytes.Length);
+                stream.Write(messageBytes, 0, messageBytes.Length);
+                stream.Flush();
             }
         }
 
@@ -348,7 +416,12 @@ namespace ChatApp.Model
             }else if(serverResponse.Header == "ChatMessage")
             {
                 System.Diagnostics.Debug.WriteLine($"Message recieved on client side is: {serverResponse.Message}");
+                MessageReceived?.Invoke(serverResponse);
 
+            }
+            else if(serverResponse.Header == "Disconnect")
+            {
+                System.Diagnostics.Debug.WriteLine($"Message recieved on client side is: {serverResponse.Message}");
             }
             // Handle other types of messages as needed
         }
@@ -368,10 +441,10 @@ namespace ChatApp.Model
         }
         public TcpClient ConnectedClient
         {
-            get { return client; } // Return the private field 'client'
+            get { return this.serverClient; } // Return the private field 'client'
             set
             {
-                client = value; // Set the private field 'client'
+                this.serverClient = value; // Set the private field 'client'
                 OnPropertyChanged(nameof(ConnectedClient));
             }
         }
@@ -390,6 +463,7 @@ namespace ChatApp.Model
     public class ChatMessage
     {
         public string Header { get; set; }
+        public string Name { get; set; }
         public string Message { get; set; }
         public DateTime Date { get; set; }
     }

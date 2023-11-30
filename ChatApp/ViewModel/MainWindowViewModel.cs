@@ -72,7 +72,9 @@ namespace ChatApp.ViewModel
 
         public void OpenChatWindow(NetworkManager networkManager, bool isServer)
         {
-            ChatWindowViewModel chatViewModel = new ChatWindowViewModel(networkManager, isServer);
+            System.Diagnostics.Debug.WriteLine($"Name: {userName}");
+
+            ChatWindowViewModel chatViewModel = new ChatWindowViewModel(networkManager, isServer, userName);
             var chatWindow = new ChatWindow(chatViewModel);
             chatWindow.Show();
 

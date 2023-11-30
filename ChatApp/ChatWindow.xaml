@@ -20,7 +20,18 @@
         </Grid.RowDefinitions>
 
         <!-- Messages display area -->
-        <TextBox Grid.Row="0" IsReadOnly="True" Margin="10" />
+        <ListBox Grid.Row="0" ItemsSource="{Binding Messages}" Margin="10">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <StackPanel>
+                        <TextBlock Text="{Binding Name}" FontWeight="Bold"/>
+                        <TextBlock Text="{Binding Date}" FontWeight="Bold"/>
+                        <TextBlock Text="{Binding Message}" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
 
         <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="10">
             <TextBox Width="600" Margin="5"

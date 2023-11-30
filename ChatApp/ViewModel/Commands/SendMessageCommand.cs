@@ -25,9 +25,14 @@ namespace ChatApp.ViewModel.Command
             ChatMessage chatMessage = new ChatMessage
             {
                 Header = "ChatMessage",
+                Name = _viewModel.networkManager.UserName,
                 Message = _viewModel.MessageText,
                 Date = DateTime.Now
             };
+            System.Diagnostics.Debug.WriteLine($"Am I server?: {_viewModel.isServer}");
+
+            _viewModel.Messages.Add( chatMessage );
+
             string serializedMessage = _viewModel.networkManager.SerializeChatMessage(chatMessage);
 
             if (_viewModel.isServer)
