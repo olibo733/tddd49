@@ -24,16 +24,30 @@ namespace ChatApp.ViewModel.Command
             return true; // or false based on your conditions
         }
 
-        public void Execute(object? parameter)
+        public async void Execute(object? parameter)
         {
             if (_viewModel.ValidateFields(out string errorMessage))
             {
                 if (int.TryParse(_viewModel.PortNumber, out int portNumber))
                 {
-                    var StartClientTask = _viewModel.networkManager.ConnectToServer(_viewModel.IpAddress, portNumber);
-                    if (StartClientTask)
+                    string isConnectionSuccessful = await _viewModel.networkManager.ConnectToServer(_viewModel.IpAddress, portNumber);
+                    if (isConnectionSuccessful == "Everything ok")
                     {
                         _viewModel.OpenChatWindow(_viewModel.networkManager, false); // Open the chat window
+                        _viewModel.ValidationMessage = "";
+
+                    }
+                    else if(isConnectionSuccessful == "Denied")
+                    {
+                        _viewModel.ValidationMessage = "Server denied the request";
+                    }
+                    else if (isConnectionSuccessful == "No server found on the given ip")
+                    {
+                        _viewModel.ValidationMessage = "No server found on the given ip";
+                    }
+                    else if (isConnectionSuccessful == "Invalid IP address format.")
+                    {
+                        _viewModel.ValidationMessage = "Invalid IP address format.";
                     }
                 } 
             }

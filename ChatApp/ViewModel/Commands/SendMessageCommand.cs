@@ -17,33 +17,51 @@ namespace ChatApp.ViewModel.Command
 
         public bool CanExecute(object? parameter)
         {
-            return true; // Command can execute if there's text
+            if(_viewModel._clientConnectedPartner != null || _viewModel._serverConnectedPartner != null)
+            { 
+                if(_viewModel._selectedConversationPartner == null )
+                {
+                    return true;
+                }else if(_viewModel._selectedConversationPartner == _viewModel._clientConnectedPartner || _viewModel._selectedConversationPartner == _viewModel._serverConnectedPartner)
+                {
+                    return true;
+                }
+                else
+                {
+                    return false;
+                }
+                
+            }
+            return false;
         }
 
         public void Execute(object? parameter)
         {
-            ChatMessage chatMessage = new ChatMessage
+            if (CanExecute(parameter))
             {
-                Header = "ChatMessage",
-                Name = _viewModel.networkManager.UserName,
-                Message = _viewModel.MessageText,
-                Date = DateTime.Now
-            };
-            System.Diagnostics.Debug.WriteLine($"Am I server?: {_viewModel.isServer}");
+                ChatMessage chatMessage = new ChatMessage
+                {
+                    Header = "ChatMessage",
+                    Sender = _viewModel.userName,
+                    Message = _viewModel.MessageText,
+                    Date = DateTime.Now
+                };
+                System.Diagnostics.Debug.WriteLine($"Am I server?: {_viewModel.isServer}");
 
-            _viewModel.Messages.Add( chatMessage );
+                _viewModel.Messages.Add(chatMessage);
 
-            string serializedMessage = _viewModel.networkManager.SerializeChatMessage(chatMessage);
+                string serializedMessage = _viewModel.networkManager.SerializeChatMessage(chatMessage);
 
-            if (_viewModel.isServer)
-            {
-                _viewModel.networkManager.SendMessageFromServer(serializedMessage);
+                if (_viewModel.isServer)
+                {
+                    _viewModel.networkManager.SendMessageFromServer(serializedMessage);
+                }
+                else
+                {
+                    _viewModel.networkManager.SendMessageToServer(serializedMessage);
+                }
+                _viewModel.MessageText = ""; // Optionally clear the message after sending
             }
-            else
-            {
-                _viewModel.networkManager.SendMessageToServer(serializedMessage);
-            }
-            _viewModel.MessageText = ""; // Optionally clear the message after sending
         }
 
         public void OnCanExecuteChanged()

@@ -9,6 +9,8 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
+using ChatApp.Model;
+
 
 namespace ChatApp.Model
 {
@@ -22,16 +24,25 @@ namespace ChatApp.Model
         private TcpClient client; // Client instance
         private NetworkStream clientStream;
         private TcpListener server;
+        private string sessiondID;
 
         public event PropertyChangedEventHandler PropertyChanged;
         public event Action<bool> ConnectionRequest;
-        public event Action<bool> ConnectionChanged;
+        public event Action<bool, string> ServerConnectionChanged;
+        public event Action<bool, string> ClientConnectionChanged;
         public event Action Disconnected;
+        public event Action<string> UserDisconnected;
         public event Action<ChatMessage> MessageReceived;
 
         public delegate void ConnectionRequestReceivedHandler(TcpClient client);
         public event ConnectionRequestReceivedHandler ConnectionRequestReceived;
         public event Action<string> ServerResponseReceived;
+        public event Action<string> OnConnectionEstablished;
+
+        public void EstablishConnection(string connectedPartner)
+        {
+            OnConnectionEstablished?.Invoke(connectedPartner);
+        }
 
         private void OnPropertyChanged(string propertyName = "")
         {
@@ -42,110 +53,150 @@ namespace ChatApp.Model
             }
         }
 
-        private void OnConnectionChanged(bool isConnected)
+        // Call this method when the client's connection status changes
+        private void OnClientConnectionChanged(bool isConnected, string partnerName)
         {
-            System.Diagnostics.Debug.WriteLine("Chinging button vis");
+            ClientConnectionChanged?.Invoke(isConnected, partnerName);
+        }
 
-            ConnectionChanged?.Invoke(isConnected);
+        // Call this method when the server's connection status changes
+        private void OnServerConnectionChanged(bool isConnected, string partnerName)
+        {
+            ServerConnectionChanged?.Invoke(isConnected, partnerName);
+        }
+
+
+        public ChatHistoryManager ChatHistoryManager { get; private set; }
+
+        public NetworkManager(ChatHistoryManager chatHistoryManager)
+        {
+            ChatHistoryManager = chatHistoryManager;            
         }
 
         //                      //
         //  Server logic below  //
         //                      //
-        public bool StartServer(string serverIPAddress, int port)
+        public string StartServer(string serverIPAddress, int port)
         {
-            Task.Factory.StartNew(() =>
+            // Check if the server is already running
+            if (server != null && server.Server.IsBound)
             {
-                if (!IPAddress.TryParse(serverIPAddress, out IPAddress ipAddress))
-                {
-                    System.Diagnostics.Debug.WriteLine("Invalid IP address format.");
-                    return;
-                }
+                System.Diagnostics.Debug.WriteLine("Server is already running.");
+                return "Server is already running.";
+            }
 
-                if (server != null && server.Server.IsBound)
-                {
-                    System.Diagnostics.Debug.WriteLine("Server is already running.");
-                    return; // Server is already started
-                }
+            if (!IPAddress.TryParse(serverIPAddress, out IPAddress ipAddress))
+            {
+                System.Diagnostics.Debug.WriteLine("Invalid IP address format.");
+                return "Invalid IP address format.";
+            }
 
+            try
+            {
                 var ipEndPoint = new IPEndPoint(ipAddress, port);
                 server = new TcpListener(ipEndPoint);
-                
 
-                try
+                Task.Factory.StartNew(() =>
                 {
-                    server.Start();
-                    System.Diagnostics.Debug.WriteLine("Start listening...");
-
-                    while (true) // Keep listening for new connections
+                    try
                     {
-                        TcpClient client = server.AcceptTcpClient();
-                        this.serverClient = client;
-                        System.Diagnostics.Debug.WriteLine("Connection request received!");
+                        server.Start();
+                        System.Diagnostics.Debug.WriteLine("Server started and listening...");
 
-                        // Store the pending client and notify the ViewModel
-                        pendingClient = client;
-                        ConnectionRequest?.Invoke(true); // Notify ViewModel that a request is pending
-                        Task.Factory.StartNew(() => ListenForClientResponse(client));
+                        while (true)
+                        {
+                            TcpClient client = server.AcceptTcpClient();
+                            this.serverClient = client;
+                            System.Diagnostics.Debug.WriteLine("Connection request received!");
 
+
+                            pendingClient = client;
+                            ConnectionRequest?.Invoke(true); // Notify ViewModel that a request is pending
+                            Task.Factory.StartNew(() => ListenForClientResponse(client));
+
+                            // Rest of the code to handle client connection
+                        }
                     }
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine("Error: " + ex.Message);
-                }
-            });
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine("Error in server operation: " + ex.Message);
+                        // Handle the exception
+                    }
+                }, TaskCreationOptions.LongRunning); // Use LongRunning for tasks that are expected to run a long time
 
-            return true;
+                return "Everything ok"; // Server started successfully
+            }
+            catch (SocketException ex)
+            {
+                if (ex.SocketErrorCode == SocketError.AddressAlreadyInUse)
+                {
+                    System.Diagnostics.Debug.WriteLine("The address is already in use.");
+                    return "The address is already in use.";
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine("Error starting server: " + ex.Message);
+                    return "Error starting server";
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("Error starting server: " + ex.Message);
+                return "Error starting server"; // Error occurred while starting the server
+            }
         }
 
-        public void Disconnect()
+
+        public void Disconnect(bool isServer)
         {
             try
             {
-                System.Diagnostics.Debug.WriteLine("Disconnect request received!");
-
                 var disconnectMessage = new ChatMessage
                 {
                     Header = "Disconnect",
-                    Name = this.UserName,
-                    Message = "User has disconnected",
+                    Sender = this.UserName,
+                    Message = $"{(isServer ? "Server" : "Client")} has disconnected",
                     Date = DateTime.Now
                 };
 
                 string serializedMessage = SerializeChatMessage(disconnectMessage);
-                byte[] messageBytes = Encoding.UTF8.GetBytes(serializedMessage);
 
-                // Server Side Disconnect
-                if (pendingClient != null)
+                if (isServer)
                 {
+                    // Notify connected clients about the server disconnecting
                     SendMessageFromServer(serializedMessage);
                     StopServer();
                 }
-                
-
-                // Client Side Disconnect
-                if (client != null && client.Connected)
+                else // Client disconnecting
                 {
+                    // Notify the server about the client disconnecting
                     SendMessageToServer(serializedMessage);
-                    NetworkStream clientStreams = client.GetStream();
-                    clientStreams.Write(messageBytes, 0, messageBytes.Length);
-                    clientStreams.Flush();
-                    clientStreams?.Close();
-                    client.Close();
-                    client = null;
-                    clientStream = null;
+                    CloseClientConnection();
                 }
 
-                // Invoke the Disconnected event to notify the UI or other components
-                Disconnected?.Invoke();
+                // Invoke the Disconnected event
+                //Disconnected?.Invoke();
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Error in Disconnect: {ex.Message}");
             }
+        }
 
-            System.Diagnostics.Debug.WriteLine("Disconnect process completed.");
+        private void CloseClientConnection()
+        {
+            if (clientStream != null)
+            {
+                clientStream.Flush();
+                clientStream.Close();
+                clientStream = null;
+            }
+
+            if (client != null)
+            {
+                client.Close();
+                client = null;
+            }
         }
 
         public void StopServer()
@@ -154,21 +205,30 @@ namespace ChatApp.Model
             {
                 if (server != null)
                 {
+                    // Optionally notify all connected clients about the server shutdown
+
                     server.Stop();
                     server = null;
+                    System.Diagnostics.Debug.WriteLine("Server stopped successfully.");
                 }
 
-                if (pendingClient != null)
-                {
-                    stream?.Close();
-                    pendingClient.Close();
-                    pendingClient = null;
-                    stream = null;
-                }
+                ClosePendingClientConnection();
+                
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Error stopping server: {ex.Message}");
+            }
+        }
+
+        private void ClosePendingClientConnection()
+        {
+            if (pendingClient != null)
+            {
+                stream?.Close();
+                pendingClient.Close();
+                pendingClient = null;
+                stream = null;
             }
         }
 
@@ -189,11 +249,12 @@ namespace ChatApp.Model
                             break; // Client has disconnected
 
                         string message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                        ChatMessage serverResponse = DeserializeChatMessage(message);
+                        ChatMessage clientResponse = DeserializeChatMessage(message);
                         System.Diagnostics.Debug.WriteLine($"Message on server side is: {message}");
                         Application.Current.Dispatcher.Invoke(() =>
                         {
-                            ProcessReceivedChatMessage(serverResponse);
+                            
+                            ProcessReceivedChatMessage(clientResponse);
                         });
                     }
                 }
@@ -216,17 +277,61 @@ namespace ChatApp.Model
             // For example, broadcasting the message to other clients or just logging it
             if(chatMessage.Header == "ChatMessage")
             {
+                ChatHistoryManager.AddMessageToChatSession(this.sessiondID, chatMessage);
                 MessageReceived?.Invoke(chatMessage);
             }
             else if (chatMessage.Header == "Disconnect")
             {
-                System.Diagnostics.Debug.WriteLine($"Message recieved on client side is: {chatMessage.Message}");
+
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    MessageBox.Show(chatMessage.Message, "Disconnection");
+                    // Update UI or perform other actions as needed
+                    
+                });
+                System.Diagnostics.Debug.WriteLine($"Disconnect is: {chatMessage.Message}");
+                //UserDisconnected?.Invoke($"User {chatMessage.Sender} has disconnected.");
+            }
+            else if( chatMessage.Header == "SessionEstablished")
+            {
+                var currentSession = new ChatSession
+                {
+                    Participant1 = chatMessage.Sender,
+                    Participant2 = chatMessage.Receiver,
+                    Messages = new List<ChatMessage>(),
+                    SessionId = Guid.NewGuid().ToString() // Create a new session ID
+                };
+                System.Diagnostics.Debug.WriteLine($"Clients name on server side is: {chatMessage.Sender}");
+
+                //EstablishConnection(chatMessage.Sender);
+                OnServerConnectionChanged(true, chatMessage.Sender);
+
+                string SessionID = ChatHistoryManager.SaveChatSession(currentSession);
+                this.sessiondID = SessionID;
+                System.Diagnostics.Debug.WriteLine($"SessionID: {SessionID}");
+
+                ChatMessage SessionIDResponse = new ChatMessage
+                {
+                    Header = "SessionIDResponse",
+                    Sender = this.UserName,
+                    Message = SessionID,
+                    Date = DateTime.Now
+                };
+                string sessionID = SerializeChatMessage(SessionIDResponse);
+                System.Diagnostics.Debug.WriteLine($"PendingClients: {pendingClient.Connected}");
+
+                SendMessageFromServer(sessionID);
+            }
+            else if (chatMessage.Header == "PlaySoundRequest")
+            {
+                System.Diagnostics.Debug.WriteLine($"play sound on server");
+                System.Media.SoundPlayer player = new System.Media.SoundPlayer(@"C:\Users\olive\Documents\Programmering\tddd49\ChatApp\blip.wav");
+                player.Play();
             }
         }
 
         public void AcceptConnection()
         {
-            System.Diagnostics.Debug.WriteLine("Accept the connection without the  pending client");
             if (pendingClient != null && pendingClient.Connected)
             {
                 System.Diagnostics.Debug.WriteLine("Accept the connection");
@@ -234,7 +339,6 @@ namespace ChatApp.Model
                 this.ConnectedClient = pendingClient;
                 // Move the connection handling logic here
                 ConnectionRequest?.Invoke(false); // Notify ViewModel that the request has been processed
-                OnConnectionChanged(true);
             }
         }
 
@@ -261,7 +365,7 @@ namespace ChatApp.Model
                     ChatMessage ServerConnectionResponse = new ChatMessage
                     {
                         Header = "ConnectionRequestResponse",
-                        Name = this.UserName,
+                        Sender = this.UserName,
                         Message = "Accept",
                         Date = DateTime.Now
                     };
@@ -272,7 +376,7 @@ namespace ChatApp.Model
                     ChatMessage ServerConnectionResponse = new ChatMessage
                     {
                         Header = "ConnectionRequestResponse",
-                        Name = this.UserName,
+                        Sender = this.UserName,
                         Message = "Deny",
                         Date = DateTime.Now
                     };
@@ -286,6 +390,7 @@ namespace ChatApp.Model
             }
             
         }
+       
 
         public void SendMessageFromServer(string message)
         {
@@ -302,47 +407,110 @@ namespace ChatApp.Model
         //  Client logic below  //
         //                      //
 
-        public bool ConnectToServer(string serverIPAddress, int port)
+        public async Task<string> ConnectToServer(string serverIPAddress, int port)
         {
-            Task.Factory.StartNew(() =>
+            if (!IPAddress.TryParse(serverIPAddress, out IPAddress ipAddress))
             {
-                if (!IPAddress.TryParse(serverIPAddress, out IPAddress ipAddress))
-                {
-                    System.Diagnostics.Debug.WriteLine("Invalid IP address format.");
-                    return false;
-                }
+                System.Diagnostics.Debug.WriteLine("Invalid IP address format.");
+                return "Invalid IP address format.";
+            }
 
-                var serverEndpoint = new IPEndPoint(ipAddress, port);
-                client = new TcpClient();
+            var serverEndpoint = new IPEndPoint(ipAddress, port);
+            client = new TcpClient();
 
-                try
+            try
+            {
+                System.Diagnostics.Debug.WriteLine($"Attempting to connect to server at {serverEndpoint}");
+                await client.ConnectAsync(serverEndpoint.Address, serverEndpoint.Port);
+                System.Diagnostics.Debug.WriteLine("Connection request sent!");
+
+                if (client.Connected)
                 {
-                    System.Diagnostics.Debug.WriteLine($"Attempting to connect to server at {serverEndpoint} ");
-                    client.Connect(serverEndpoint);
-                    System.Diagnostics.Debug.WriteLine("Connection request sent!");
-                    
-                    if (client.Connected)
+                    clientStream = client.GetStream();
+
+                    // Optionally, you can add a timeout for the response
+                    var response = await ReadResponseFromServer();
+                    System.Diagnostics.Debug.WriteLine($"Response is: {response}");
+                    ChatMessage chatMessage = DeserializeChatMessage(response);
+                    System.Diagnostics.Debug.WriteLine($"Chatmessage.message is: {chatMessage.Message}");
+
+                    // Here, you should include your logic to determine if the response
+                    // indicates a successful connection.
+                    // For example, you might expect a specific message from the server.
+                    if (chatMessage.Header == "ConnectionRequestResponse" && chatMessage.Message == "Accept")
                     {
-                        clientStream = client.GetStream();
+                        ServerResponseReceived?.Invoke(chatMessage.Message);
+                        System.Diagnostics.Debug.WriteLine($"Client is is: {this.UserName}");
+
+                        var currentSession = new ChatSession
+                        {
+                            Participant1 = chatMessage.Sender,
+                            Participant2 = this.UserName,
+                            Messages = new List<ChatMessage>(),
+                            SessionId = Guid.NewGuid().ToString() // Create a new session ID
+                        };
+
+                        // Notify server with both usernames
+                        ChatMessage notifyServerWithNames = new ChatMessage
+                        {
+                            Header = "SessionEstablished",
+                            Sender = this.UserName,        // client's username
+                            Receiver = chatMessage.Sender, // server's username
+                            Message = "Session established between " + this.UserName + " and " + chatMessage.Sender,
+                            Date = DateTime.Now
+                        };
+                        System.Diagnostics.Debug.WriteLine($"Servers name on client side is: {chatMessage.Sender}");
+                        //EstablishConnection(chatMessage.Sender);
+                        string notifyString = SerializeChatMessage(notifyServerWithNames);
+                        SendMessageToServer(notifyString);
+                        
                         ListenForServerResponse(client);
-                        return true;  // Indicates successful connection
+                        return "Everything ok";
+                    }else if(chatMessage.Header == "ConnectionRequestResponse" && chatMessage.Message == "Deny")
+                    {
+                        ServerResponseReceived?.Invoke(chatMessage.Message);
+                        return "Denied";
                     }
-                    return false;
-
-                    // Here, you can add additional logic if needed, e.g., waiting for a server response
-                    // ...
-
-                    // Indicates the connection attempt was made
                 }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"Connection failed: {ex.Message}");
-                    return false;
-                }
-            });
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Connection failed: {ex.Message}");
+            }
 
-            return false; // Indicates the task to connect was started
+            return "No server found on the given ip";
         }
+
+        private async Task<string> ReadResponseFromServer()
+        {
+            if (client == null || !client.Connected || clientStream == null)
+            {
+                throw new InvalidOperationException("Not connected to a server.");
+            }
+
+            byte[] buffer = new byte[1024];
+            try
+            {
+                int bytesRead = await clientStream.ReadAsync(buffer, 0, buffer.Length);
+                if (bytesRead > 0)
+                {
+                    string response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                    System.Diagnostics.Debug.WriteLine($"Received response: {response}");
+                    return response;
+                }
+                else
+                {
+                    return string.Empty; // No data received, or connection closed
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error reading response from server: {ex.Message}");
+                return string.Empty; // Return empty string or handle the exception as needed
+            }
+        }
+
+
 
         public void SendMessageToServer(string message)
         {
@@ -403,25 +571,38 @@ namespace ChatApp.Model
 
         private void ProcessServerMessage(ChatMessage serverResponse)
         {
-            if (serverResponse.Header == "ConnectionRequestResponse")
-            {
-                if (serverResponse.Message == "Accept")
-                {
-                    ServerResponseReceived?.Invoke(serverResponse.Message);
-                }
-                else if (serverResponse.Message == "Deny")
-                {
-                    ServerResponseReceived?.Invoke(serverResponse.Message);
-                }
-            }else if(serverResponse.Header == "ChatMessage")
+           if(serverResponse.Header == "ChatMessage")
             {
                 System.Diagnostics.Debug.WriteLine($"Message recieved on client side is: {serverResponse.Message}");
+                ChatHistoryManager.AddMessageToChatSession(this.sessiondID, serverResponse);
+
                 MessageReceived?.Invoke(serverResponse);
 
             }
             else if(serverResponse.Header == "Disconnect")
             {
                 System.Diagnostics.Debug.WriteLine($"Message recieved on client side is: {serverResponse.Message}");
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    MessageBox.Show(serverResponse.Message, "Disconnection");
+                    // Update UI or perform other actions as needed
+                    //IsConnected = false;
+                });
+                //Disconnect(false);
+                //Disconnected?.Invoke();
+            }
+            else if(serverResponse.Header == "SessionIDResponse")
+            {
+                this.sessiondID = serverResponse.Message;
+                System.Diagnostics.Debug.WriteLine($"serverResponse.sender is: {serverResponse.Sender}");
+
+                OnClientConnectionChanged(true, serverResponse.Sender);
+            }
+            else if(serverResponse.Header == "PlaySoundRequest")
+            {
+                System.Diagnostics.Debug.WriteLine($"play sound on client");
+                System.Media.SoundPlayer player = new System.Media.SoundPlayer(@"C:\Users\olive\Documents\Programmering\tddd49\ChatApp\blip.wav");
+                player.Play();
             }
             // Handle other types of messages as needed
         }
@@ -458,12 +639,34 @@ namespace ChatApp.Model
                 OnPropertyChanged(nameof(ServerClient));
             }
         }
+
+        public void SendPlaySoundRequest(bool isServer)
+        {
+            var playSoundMessage = new ChatMessage
+            {
+                Header = "PlaySoundRequest",
+                Sender = this.UserName,
+                Message = "Play sound",
+                Date = DateTime.Now
+            };
+
+            string serializedMessage = SerializeChatMessage(playSoundMessage);
+            if (isServer)
+            {
+                SendMessageFromServer(serializedMessage);
+            }
+            else
+            {
+                SendMessageToServer(serializedMessage);
+            }
+        }
     }
 
     public class ChatMessage
     {
         public string Header { get; set; }
-        public string Name { get; set; }
+        public string Sender { get; set; }
+        public string Receiver { get; set; }
         public string Message { get; set; }
         public DateTime Date { get; set; }
     }

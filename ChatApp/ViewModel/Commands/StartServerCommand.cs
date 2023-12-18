@@ -32,10 +32,20 @@ namespace ChatApp.ViewModel.Command
             {
                 if (int.TryParse(_viewModel.PortNumber, out int portNumber))
                 {
-                    var startServerTask = _viewModel.networkManager.StartServer(_viewModel.IpAddress, portNumber);
-                    if (startServerTask)
+                    string startServerTask = _viewModel.networkManager.StartServer(_viewModel.IpAddress, portNumber);
+                    if (startServerTask == "Everything ok")
                     {
                         _viewModel.OpenChatWindow(_viewModel.networkManager, true); // Open the chat window
+                    }
+                    else if(startServerTask == "Server is already running.")
+                    {
+                        _viewModel.ValidationMessage = "Server is already running";
+                    }else if(startServerTask == "The address is already in use.")
+                    {
+                        _viewModel.ValidationMessage = "The address is already in use.";
+                    }else if(startServerTask == "Error starting server")
+                    {
+                        _viewModel.ValidationMessage = "Error starting server";
                     }
                 }
             }

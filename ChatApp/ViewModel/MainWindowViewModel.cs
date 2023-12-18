@@ -40,6 +40,9 @@ namespace ChatApp.ViewModel
                 {
                     userName = value;
                     OnPropertyChanged();
+
+                    // Update the UserName in networkManager when the property changes
+                    networkManager.UserName = userName;
                 }
             }
         }
@@ -93,7 +96,7 @@ namespace ChatApp.ViewModel
             }
             else if (responseMessage == "Accept")
             {
-                OpenChatWindow(this.networkManager, false);
+                //OpenChatWindow(this.networkManager, false);
                 // You might want to take additional actions here for an accepted connection
             }
         }

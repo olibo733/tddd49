@@ -5,26 +5,55 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:ChatApp"
         mc:Ignorable="d"
-        Title="ChatWindow" Height="450" Width="800">
+        Title="ChatWindow" Height="450" Width="1000">
 
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisConverter"/>
     </Window.Resources>
 
     <Grid>
+        <!-- Define the columns -->
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="200"/>
+            <!-- Column for previous conversations and search bar -->
+            <ColumnDefinition Width="*"/>
+            <!-- Column for chat interface -->
+        </Grid.ColumnDefinitions>
+
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <!-- Row for search bar -->
             <RowDefinition Height="*"/>
+            <!-- Row for previous conversations list -->
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <!-- New row for Accept/Deny buttons -->
+            <!-- Row for Accept/Deny buttons -->
         </Grid.RowDefinitions>
 
+        <!-- Search bar for conversations -->
+        <TextBox Grid.Column="0" Grid.Row="0" Margin="5"
+                 
+                 Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}"/>
+
+        <!-- Previous Conversations List -->
+        <ListBox Grid.Column="0" Grid.Row="1" Margin="5" 
+             ItemsSource="{Binding SearchedConversationPartners}" 
+             SelectedItem="{Binding SelectedConversationPartner}"
+             SelectionChanged="OnConversationSelected">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <TextBlock Text="{Binding}" FontWeight="Bold"/>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
+
         <!-- Messages display area -->
-        <ListBox Grid.Row="0" ItemsSource="{Binding Messages}" Margin="10">
+        <ListBox Grid.Column="1" Grid.Row="1" ItemsSource="{Binding Messages}" Margin="10">
             <ListBox.ItemTemplate>
                 <DataTemplate>
                     <StackPanel>
-                        <TextBlock Text="{Binding Name}" FontWeight="Bold"/>
+                        <TextBlock Text="{Binding Sender}" FontWeight="Bold"/>
                         <TextBlock Text="{Binding Date}" FontWeight="Bold"/>
                         <TextBlock Text="{Binding Message}" TextWrapping="Wrap"/>
                     </StackPanel>
@@ -32,23 +61,22 @@
             </ListBox.ItemTemplate>
         </ListBox>
 
-
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="10">
+        <!-- Message input area -->
+        <StackPanel Grid.Column="1" Grid.Row="2" Orientation="Horizontal" Margin="10">
             <TextBox Width="600" Margin="5"
-                 Text="{Binding MessageText, UpdateSourceTrigger=PropertyChanged}" />
+             Text="{Binding MessageText, UpdateSourceTrigger=PropertyChanged, Mode=TwoWay}" />
             <Button Content="Send" Width="100" Margin="5"
-                Command="{Binding SendMessageCommand}" />
+            Command="{Binding SendMessageCommand}" />
         </StackPanel>
 
         <!-- Accept/Deny buttons -->
-        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center" Margin="10">
+        <StackPanel Grid.Column="1" Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Center" Margin="10">
             <Button Command="{Binding AcceptCommand}" Content="Accept" Width="100" Margin="5"
                     Visibility="{Binding IsConnectionRequestPending, Converter={StaticResource BoolToVisConverter}}"/>
             <Button Command="{Binding DenyCommand}" Content="Deny" Width="100" Margin="5"
                     Visibility="{Binding IsConnectionRequestPending, Converter={StaticResource BoolToVisConverter}}"/>
-            <Button Command="{Binding DisconnectCommand}" Content="Disconnect" Width="100" Margin="5"
-                    />
+            <Button Command="{Binding DisconnectCommand}" Content="Disconnect" Width="100" Margin="5"/>
+            <Button Command="{Binding PlaySoundCommand}" Content="Play Sound" Width="100" Margin="5" />
         </StackPanel>
-        
     </Grid>
 </Window>

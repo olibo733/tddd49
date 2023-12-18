@@ -21,3 +21,4 @@ C:\Users\olive\Documents\Programmering\tddd49\ChatApp\obj\Debug\net7.0-windows\r
 C:\Users\olive\Documents\Programmering\tddd49\ChatApp\obj\Debug\net7.0-windows\ChatWindow.baml
 C:\Users\olive\Documents\Programmering\tddd49\ChatApp\obj\Debug\net7.0-windows\ChatWindow.g.cs
 C:\Users\olive\Documents\Programmering\tddd49\ChatApp\obj\Debug\net7.0-windows\GeneratedInternalTypeHelper.g.cs
+C:\Users\olive\Documents\Programmering\tddd49\ChatApp\obj\Debug\net7.0-windows\ChatApp.sourcelink.json

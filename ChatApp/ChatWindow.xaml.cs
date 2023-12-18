@@ -1,6 +1,7 @@
 ﻿using ChatApp.ViewModel;
 using System;
 using System.Windows;
+using System.Windows.Controls;
 
 namespace ChatApp
 {
@@ -34,6 +35,17 @@ namespace ChatApp
             if (DataContext is ChatWindowViewModel viewModel)
             {
                 viewModel.RequestClose -= CloseWindow;
+            }
+        }
+
+        private void OnConversationSelected(object sender, SelectionChangedEventArgs e)
+        {
+            if (sender is ListBox listBox && listBox.SelectedItem is string selectedPartner)
+            {
+                if (DataContext is ChatWindowViewModel viewModel)
+                {
+                    viewModel.LoadConversationHistory(selectedPartner);
+                }
             }
         }
     }
